@@ -1,0 +1,9 @@
+diff a/mm/vmstat.c b/mm/vmstat.c	(rejected hunks)
+@@ -1162,6 +1162,7 @@ int fragmentation_index(struct zone *zone, unsigned int order)
+ 	"nr_dirtied",
+ 	"nr_written",
+ 	"", /* nr_indirectly_reclaimable */
++	"nr_thp_reserved",
+ 
+ 	/* enum writeback_stat_item counters */
+ 	"nr_dirty_threshold",

@@ -1,0 +1,9 @@
+diff a/include/linux/huge_mm.h b/include/linux/huge_mm.h	(rejected hunks)
+@@ -92,6 +92,7 @@ extern ssize_t single_hugepage_flag_show(struct kobject *kobj,
+ extern bool is_vma_temporary_stack(struct vm_area_struct *vma);
+ 
+ extern unsigned long transparent_hugepage_flags;
++extern unsigned int hugepage_promotion_threshold;
+ 
+ static inline bool transparent_hugepage_enabled(struct vm_area_struct *vma)
+ {

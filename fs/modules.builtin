@@ -1,0 +1,5 @@
+kernel/fs/binfmt_script.ko
+kernel/fs/crypto/fscrypto.ko
+kernel/fs/exportfs/exportfs.ko
+kernel/fs/nls/nls_base.ko
+kernel/fs/pstore/pstore.ko

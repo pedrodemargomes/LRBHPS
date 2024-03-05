@@ -1,0 +1,6 @@
+kernel/drivers/input/input-core.ko
+kernel/drivers/input/input-leds.ko
+kernel/drivers/input/mousedev.ko
+kernel/drivers/input/keyboard/atkbd.ko
+kernel/drivers/input/misc/xen-kbdfront.ko
+kernel/drivers/input/touchscreen/of_touchscreen.ko

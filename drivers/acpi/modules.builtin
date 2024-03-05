@@ -1,0 +1,4 @@
+kernel/drivers/acpi/processor.ko
+kernel/drivers/acpi/thermal.ko
+kernel/drivers/acpi/hed.ko
+kernel/drivers/acpi/acpi_extlog.ko

@@ -1607,7 +1607,7 @@ static inline unsigned long zap_pmd_range(struct mmu_gather *tlb,
 			mutex_lock(&vma->vm_mm->thp_reservations->res_hash_lock);
 			struct thp_reservation *res = khugepaged_find_reservation(vma->vm_mm, addr);
 			if (res) {
-				lru_add_drain_all();
+				// lru_add_drain_all();
 				p = res->page;
 				int init_off = ((addr & ~HPAGE_PMD_MASK) >> PAGE_SHIFT);
 				int end_off = ((old_next-1 & ~HPAGE_PMD_MASK) >> PAGE_SHIFT);
@@ -1627,8 +1627,8 @@ static inline unsigned long zap_pmd_range(struct mmu_gather *tlb,
 				// pr_info("init_off = %d end_off = %d", init_off, end_off);
 				if (bitmap_weight(res->mask, 512) == 0) {
 					// pr_info("bitmap_weight(res->mask, 512) == 0 page_to_pfn(res->page) = %lx PageCompound(res->page) = %d vma->vm_start = %lx vma->vm_end = %lx addr = %lx next = %lx", page_to_pfn(res->page), PageCompound(res->page), vma->vm_start, vma->vm_end, addr, next);
-					tlb_flush_mmu(tlb);
-					lru_add_drain_all();
+					// tlb_flush_mmu(tlb);
+					// lru_add_drain_all();
 					// for (i = 0;i < 512; i++)
 					// 	pr_info("before khugepaged_free_reservation page_to_pfn(res->page) = %lx page_count(page) = %d PageLRU(page) = %d PageActive(page) = %d PageLRU(page) = %d page->lru = %lx", page_to_pfn(res->page+i), page_count(res->page+i), PageLRU(res->page+i), PageActive(res->page+i), PageLRU(res->page+i), (res->page+i)->lru);
 					khugepaged_free_reservation(vma->vm_mm, res);

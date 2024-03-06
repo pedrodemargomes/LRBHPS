@@ -1207,7 +1207,7 @@ static void __collapse_huge_page_convert(pte_t *pte, struct page *page,
 		// __page_cache_release( page_folio(page) );
 
 		if (pte_none(pteval) || is_zero_pfn(pte_pfn(pteval))) {
-			clear_user_highpage(page, address);
+			//clear_user_highpage(page, address);
 			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 1);
 			if (is_zero_pfn(pte_pfn(pteval))) {
 				/*
@@ -1223,12 +1223,12 @@ static void __collapse_huge_page_convert(pte_t *pte, struct page *page,
 			}
 			// dec_node_page_state(page, NR_THP_RESERVED);
 		} else {
-			// if (idx_end != idx_begin) {
-			// 	// pr_info("npages = %d", idx_end-idx_begin);
-			// 	clear_pages_clzero(page_address(head+idx_begin), idx_end-idx_begin);
-			// }
-			// idx_begin = idx_end+1;
-
+			if (idx_end != idx_begin) {
+				// pr_info("npages = %d", idx_end-idx_begin);
+				clear_pages_clzero(page_address(head+idx_begin), idx_end-idx_begin);
+			}
+			idx_begin = idx_end+1;
+			
 			dec_node_page_state(page, NR_ISOLATED_ANON +
 					    !PageSwapBacked(page));
 			unlock_page(page);
@@ -1255,10 +1255,10 @@ static void __collapse_huge_page_convert(pte_t *pte, struct page *page,
 			WARN_ON(PageSwapCache(page));
 		}
 	}
-	// if (idx_begin != idx_end) {
-	// 	// pr_info("npages = %d", idx_end-idx_begin);
-	// 	clear_pages_clzero(page_address(head+idx_begin), idx_end-idx_begin);
-	// }
+	if (idx_begin != idx_end) {
+		// pr_info("npages = %d", idx_end-idx_begin);
+		clear_pages_clzero(page_address(head+idx_begin), idx_end-idx_begin);
+	}
 	
 	set_page_count(head, 1);
 
@@ -2073,7 +2073,7 @@ int promote_huge_page_address(struct mm_struct *mm, unsigned long haddr)
 		pte_unmap(pte);
 		spin_lock(pmd_ptl);
 		BUG_ON(!pmd_none(*pmd));
-		pr_info("!isolate page_to_pfn(head) = %lx PageCompound(head) = %d PageLRU(head) = %d", page_to_pfn(head), PageCompound(head), PageLRU(head));
+		//pr_info("!isolate page_to_pfn(head) = %lx PageCompound(head) = %d PageLRU(head) = %d", page_to_pfn(head), PageCompound(head), PageLRU(head));
 		/*
 		 * We can only use set_pmd_at when establishing
 		 * hugepmds and never for establishing regular pmds that
@@ -2125,7 +2125,7 @@ int promote_huge_page_address(struct mm_struct *mm, unsigned long haddr)
 	// 	pr_info("after promote_huge_page_address page_to_pfn(res->page + i) = %lx page_count(res->page + %d) = %d page_mapcount(res->page) = %d PageCompound(page) = %d compound_mapcount_ptr(page) = %d PageLRU(page) = %d PageHead(page) = %d", page_to_pfn(res->page + i), i, page_count(res->page + i), page_mapcount(res->page + i), PageCompound(res->page + i), atomic_read(compound_mapcount_ptr(res->page + i)), PageLRU(res->page + i), PageHead(res->page + i));
 
 	count_vm_event(THP_RES_PROMOTED);
-	lru_add_drain_all();
+	// lru_add_drain_all();
 out:
 	mutex_unlock(&mm->thp_reservations->res_hash_lock);
 	return ret;

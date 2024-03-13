@@ -2038,8 +2038,8 @@ static isolate_migrate_t isolate_migratepages(struct compact_control *cc)
 		break;
 	}
 
-	// if (freed)
-	// 	pr_info("freed cc->nr_migratepages = %d", cc->nr_migratepages);
+
+	// pr_info("freed = %d cc->nr_migratepages = %d", freed, cc->nr_migratepages);
 
 	return cc->nr_migratepages ? ISOLATE_SUCCESS : ISOLATE_NONE;
 }

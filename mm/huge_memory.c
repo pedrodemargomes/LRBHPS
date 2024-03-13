@@ -2408,9 +2408,9 @@ static inline void split_huge_pmd_if_needed(struct vm_area_struct *vma, unsigned
 	    range_in_vma(vma, ALIGN_DOWN(address, HPAGE_PMD_SIZE),
 			 ALIGN(address, HPAGE_PMD_SIZE))) {
 		// pr_info("khugepaged_release_reservation split_huge_pmd_if_needed address = %lx", address);
-		if (!munmap) {
-			khugepaged_release_reservation(vma->vm_mm, address);
-		}
+		// if (!munmap) {
+		// 	khugepaged_release_reservation(vma->vm_mm, address);
+		// }
 		split_huge_pmd_address(vma, address, false, NULL);
 	}
 }

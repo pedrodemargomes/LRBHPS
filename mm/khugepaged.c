@@ -1207,7 +1207,7 @@ static void __collapse_huge_page_convert(pte_t *pte, struct page *page,
 		// __page_cache_release( page_folio(page) );
 
 		if (pte_none(pteval) || is_zero_pfn(pte_pfn(pteval))) {
-			//clear_user_highpage(page, address);
+			// clear_user_highpage(page, address);
 			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 1);
 			if (is_zero_pfn(pte_pfn(pteval))) {
 				/*

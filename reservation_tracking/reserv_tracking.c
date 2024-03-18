@@ -272,7 +272,8 @@ restart:
 	// 	// pr_info("zone normal = %d", free_huge_pages);
 	
 	// split = deferred_split_scan_only_asap(NULL, &sc);
-	pr_info("split = %d", split);
+	if (split)
+		pr_info("split = %d", split);
 	
 	// 	compact_nodes();
 	// 	ds_queue = &pgdata->deferred_split_queue;

@@ -507,13 +507,13 @@ void khugepaged_reserve(struct mm_struct *mm, struct vm_area_struct *vma, unsign
 	res->vma = vma;
 	res->lock = &mm->thp_reservations->res_hash_lock;
 	res->timestamp = jiffies_to_msecs(jiffies);
+	bitmap_zero(res->mask, 512);
 	hash_add(mm->thp_reservations->res_hash, &res->node, haddr);
 
 	INIT_LIST_HEAD(&res->lru);
 	// pr_info("add res to thp_reservations_lru haddr = %lx", haddr);
 	list_lru_add(&thp_reservations_lru, &res->lru);
 
-	bitmap_zero(res->mask, 512);
 	// mod_node_page_state(page_pgdat(page), NR_THP_RESERVED, HPAGE_PMD_NR);
 
 	mutex_unlock(&mm->thp_reservations->res_hash_lock);
@@ -834,7 +834,7 @@ enum lru_status thp_lru_free_reservation(struct list_head *item,
 	for (i = 0; i < HPAGE_PMD_NR; i++) {
 		put_page(page + i);
 	}
-	set_pageblock_skip(page);
+	clear_pageblock_skip(page);
 
 	kfree(res);
 

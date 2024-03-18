@@ -1586,8 +1586,65 @@ static void isolate_freepages(struct compact_control *cc)
 	unsigned long block_end_pfn;	/* end of current pageblock */
 	unsigned long low_pfn;	     /* lowest pfn scanner is able to scan */
 	struct list_head *freelist = &cc->freepages;
-	unsigned int stride;
+	unsigned int stride = 1;
 
+	struct list_head *pos, *aux;
+	bool freed;
+	struct list_lru_one *l;
+	struct list_lru_node *nlru;
+	unsigned long pfn_reserv;
+break_reserv:
+	freed = false;
+	nlru = &(&thp_reservations_lru)->node[0];
+	spin_lock(&nlru->lock);
+	l = &nlru->lru;
+	// pr_info("BEGIN list_for_each_safe");
+	list_for_each_safe(pos, aux, &l->list) {
+		struct thp_reservation *res = container_of(pos,
+						struct thp_reservation,
+						lru);
+		if ((jiffies_to_msecs(jiffies) - res->timestamp) < 5000)
+			continue;
+		if (PageCompound(res->page))
+			continue;
+		// if (pageblock_end_pfn(page_to_pfn(res->page)) > cc->free_pfn)
+		// 	continue;
+		if (page_to_pfn(res->page) < cc->zone->zone_start_pfn || page_to_pfn(res->page) >= zone_end_pfn(cc->zone) )
+			continue;
+		if (thp_lru_free_reservation(pos, l, &nlru->lock, &pfn_reserv) == LRU_REMOVED_RETRY) {
+			assert_spin_locked(&nlru->lock);
+			nlru->nr_items--;
+			freed = true;
+			drain_all_pages(cc->zone);
+			break;
+		}
+	}
+	spin_unlock(&nlru->lock);
+	if (freed) {
+		// pr_info("freed success pfn_reserv = %lx cc->free_pfn = %lx zone = %s cc->order = %d cc->nr_freepages = %u cc->nr_migratepages = %u", pfn_reserv, cc->free_pfn, cc->zone->name, cc->order, cc->nr_freepages, cc->nr_migratepages);
+		page = pfn_to_page(pfn_reserv);
+		isolate_start_pfn = pfn_reserv;
+		block_end_pfn = pfn_reserv + pageblock_nr_pages;
+		
+		if (!isolation_suitable(cc, page)) {
+			// pr_info("!isolation_suitable");
+			goto break_reserv;
+		}
+
+		isolate_freepages_block(cc, &isolate_start_pfn,
+					block_end_pfn, freelist, stride, false);
+
+		if (isolate_start_pfn == block_end_pfn)
+			update_pageblock_skip(cc, page, block_start_pfn);
+
+		if (cc->nr_freepages >= cc->nr_migratepages) {
+			// pr_info("cc->nr_freepages >= cc->nr_migratepages");
+			goto splitmap;
+		}
+		// pr_info("isolate_start_pfn = %u", isolate_start_pfn);
+		goto break_reserv;
+	}
+	
 	/* Try a small search of the free lists for a candidate */
 	fast_isolate_freepages(cc);
 	if (cc->nr_freepages)
@@ -1834,6 +1891,7 @@ static unsigned long fast_find_migrateblock(struct compact_control *cc, bool bre
 				assert_spin_locked(&nlru->lock);
 				nlru->nr_items--;
 				*freed = true;
+				drain_all_pages(cc->zone);
 				break;
 			}
 		}
@@ -1841,7 +1899,6 @@ static unsigned long fast_find_migrateblock(struct compact_control *cc, bool bre
 		if (*freed) {
 			// pr_info("freed success pfn_reserv = %lx cc->free_pfn = %lx zone = %s cc->order = %d", pfn_reserv, cc->free_pfn, cc->zone->name, cc->order);
 			cc->fast_search_fail = 0;
-			drain_all_pages(cc->zone);
 			return pfn_reserv;
 		} 
 		// else {

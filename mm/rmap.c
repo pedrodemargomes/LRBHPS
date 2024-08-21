@@ -1455,10 +1455,6 @@ void page_remove_rmap(struct page *page,
 			if (atomic_read(&head[i]._mapcount) == -1)
 				nr++;
 		}
-		// pr_info("nr = %d", nr);
-		if (nr > 512-hugepage_promotion_threshold)
-			head->flags |= 1UL << PG_split_asap;
-
 		deferred_split_huge_page(compound_head(page));
 	}
 	/*

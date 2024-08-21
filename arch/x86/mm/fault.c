@@ -1407,25 +1407,25 @@ retry:
 		goto retry;
 	}
 
-	bool check_promote = false;
-	unsigned long haddr = address & HPAGE_PMD_MASK;
-	// unsigned long hstart = (vma->vm_start + ~HPAGE_PMD_MASK) & HPAGE_PMD_MASK;
-	// unsigned long hend = vma->vm_end & HPAGE_PMD_MASK;
-	if (mm_thp_reservations(mm) && vma_is_anonymous(vma) && !( haddr < vma->vm_start || haddr + HPAGE_PMD_SIZE > vma->vm_end)) {
-		mutex_lock(&mm->thp_reservations->res_hash_lock);
-		struct thp_reservation *res = khugepaged_find_reservation(mm, haddr);
-		mutex_unlock(&mm->thp_reservations->res_hash_lock);
-		if (res && !PageCompound(res->page) && bitmap_weight(res->mask, 512) > hugepage_promotion_threshold)
-			check_promote = true;
-	}
+	// bool check_promote = false;
+	// unsigned long haddr = address & HPAGE_PMD_MASK;
+	// // unsigned long hstart = (vma->vm_start + ~HPAGE_PMD_MASK) & HPAGE_PMD_MASK;
+	// // unsigned long hend = vma->vm_end & HPAGE_PMD_MASK;
+	// if (mm_thp_reservations(mm) && vma_is_anonymous(vma) && !( haddr < vma->vm_start || haddr + HPAGE_PMD_SIZE > vma->vm_end)) {
+	// 	mutex_lock(&mm->thp_reservations->res_hash_lock);
+	// 	struct thp_reservation *res = khugepaged_find_reservation(mm, haddr);
+	// 	mutex_unlock(&mm->thp_reservations->res_hash_lock);
+	// 	if (res && !PageCompound(res->page) && bitmap_weight(res->mask, 512) > hugepage_promotion_threshold)
+	// 		check_promote = true;
+	// }
 
 	mmap_read_unlock(mm);
 		
-	if (check_promote) {
-		mmap_write_lock(mm);
-		int ret = promote_huge_page_address(mm, haddr);
-		mmap_write_unlock(mm);
-	}
+	// if (check_promote) {
+	// 	mmap_write_lock(mm);
+	// 	int ret = promote_huge_page_address(mm, haddr);
+	// 	mmap_write_unlock(mm);
+	// }
 
 	if (likely(!(fault & VM_FAULT_ERROR)))
 		return;

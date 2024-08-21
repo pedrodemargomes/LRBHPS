@@ -26,6 +26,7 @@ struct thp_reservation {
 	struct list_head lru;
 	DECLARE_BITMAP(mask, 512); // unsigned long *
 	unsigned int timestamp;
+	int nr_unused;
 };
 
 struct thp_resvs {
@@ -61,20 +62,22 @@ struct thp_reservation *khugepaged_find_reservation(
 	struct mm_struct *mm,
 	unsigned long address);
 
-// void khugepaged_mod_resv_unused(struct vm_area_struct *vma,
-// 				  unsigned long address, int delta);
+void khugepaged_mod_resv_unused(struct mm_struct *mm,
+				unsigned long address, int delta);
 
 struct page *khugepaged_get_reserved_page(
 	struct mm_struct *mm,
 	struct vm_area_struct *vma,
 	unsigned long address,
-	bool *out);
+	bool *out,
+	bool *retry,
+	unsigned int flags);
 
 void khugepaged_reserve(struct mm_struct *mm,
 			struct vm_area_struct *vma,
 			unsigned long address);
 
-void khugepaged_release_reservation(struct mm_struct *mm,
+struct thp_reservation *khugepaged_release_reservation(struct mm_struct *mm,
 				    unsigned long address);
 
 void khugepaged_free_reservation(struct mm_struct *mm,

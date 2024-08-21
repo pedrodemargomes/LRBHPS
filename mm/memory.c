@@ -1614,6 +1614,13 @@ static inline unsigned long zap_pmd_range(struct mmu_gather *tlb,
 				for(i = init_off; i <= end_off; i++) {
 					if (test_bit(i, res->mask)) {
 						clear_bit(i, res->mask);
+
+						// if (!PageCompound(res->page)) {
+						// 	WARN_ON(res->nr_unused + 1 > 512);
+						// 	res->nr_unused += 1;
+						// 	inc_node_page_state(res->page, NR_THP_RESERVED);
+						// }
+						
 						// pr_info("clear_bit __page_cache_release page_to_pfn(res->page+i) = %lx", page_to_pfn(res->page+i));
 						if(!PageCompound(res->page+i))
 							__page_cache_release( page_folio(res->page+i) );
@@ -3204,26 +3211,20 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
 
-	// if (is_zero_pfn(pte_pfn(vmf->orig_pte))) {
-	// 	new_page = khugepaged_get_reserved_page(mm, vma, vmf->address, &out);
-	// 	if (new_page)
-	// 		pr_info("wp_page_copy page_to_pfn(page) = %lx page_count(page) = %d PageLRU(page) = %d PageCompound(page) = %d", page_to_pfn(new_page), page_count(new_page), PageLRU(new_page), PageCompound(new_page));
-	// 	if (!new_page) {
-	// 		new_page = alloc_zeroed_user_highpage_movable(vma,
- 	// 						      vmf->address);
-	// 	} else {
-	// 		clear_user_highpage(new_page, vmf->address);
-	// 		pg_from_reservation = true;
-	// 	}
-	// 	if (!new_page)
-	// 		goto oom;
-	// } else {
+	// if(khugepaged_release_reservation(mm, vmf->address))
+	//	pr_info("khugepaged_release_reservation wp_page_copy vmf->address = %lx page_to_pfn(old_page) = %lx", vmf->address, page_to_pfn(old_page));
+
+	if (is_zero_pfn(pte_pfn(vmf->orig_pte))) {
+		new_page = alloc_zeroed_user_highpage_movable(vma,
+ 	 						      vmf->address);
+	 	if (!new_page)
+	 		goto oom;
+	} else {
 		/*
 		 * XXX If there's a THP reservation, for now just
 		 * release it since they're not shared on fork.
 		 */
-		// pr_info("khugepaged_release_reservation wp_page_copy");
-		khugepaged_release_reservation(mm, vmf->address);
+		khugepaged_release_reservation(mm, vmf->address);		
 		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
 				vmf->address);
 		if (!new_page)
@@ -3246,7 +3247,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 			return ret == -EHWPOISON ? VM_FAULT_HWPOISON : 0;
 		}
 		kmsan_copy_page_meta(new_page, old_page);
-	// }
+	}
 
 	if (mem_cgroup_charge(page_folio(new_page), mm, GFP_KERNEL))
 		goto oom_free_new;
@@ -4188,10 +4189,13 @@ out_release:
 static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
+	struct mm_struct *mm = vma->vm_mm;
 	struct page *page;
 	vm_fault_t ret = 0;
 	pte_t entry;
 	bool pg_from_reservation = false;
+	bool out = false;
+	bool retry = false;
 
 	/* File mapping without ->vm_ops ? */
 	if (vma->vm_flags & VM_SHARED)
@@ -4239,11 +4243,13 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	/* Allocate our own private page. */
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
-	bool out = false;
-	page = khugepaged_get_reserved_page(vma->vm_mm, vma, vmf->address, &out);
+	page = khugepaged_get_reserved_page(vma->vm_mm, vma, vmf->address, &out, &retry, vmf->flags);
 	if (out) {
-		// pr_info("out = true page_to_pfn(page) = %lx page_count(page) = %d page_mapcount(page) = %d PageLRU(page) = %d PageCompound(page) = %d vmf->address = %lx", page_to_pfn(page), page_count(page), page_mapcount(page), PageLRU(page), PageCompound(page), vmf->address);
-		return 0;
+		//pr_info("out = true page_to_pfn(page) = %lx page_count(page) = %d page_mapcount(page) = %d PageLRU(page) = %d PageCompound(page) = %d vmf->address = %lx", page_to_pfn(page), page_count(page), page_mapcount(page), PageLRU(page), PageCompound(page), vmf->address);
+		//pr_info("out = true vmf->address = %lx", vmf->address);
+		if (retry)
+			return VM_FAULT_RETRY;
+		return VM_FAULT_COMPLETED;
 	}
 	if (!page) {
 		page = alloc_zeroed_user_highpage_movable(vma, vmf->address);
@@ -4292,19 +4298,21 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 		return handle_userfault(vmf, VM_UFFD_MISSING);
 	}
 
-	// if (pg_from_reservation)
-	// 	khugepaged_mod_resv_unused(vma, vmf->address, -1);
-
 	inc_mm_counter_fast(vma->vm_mm, MM_ANONPAGES);
 	if (!PageCompound(page)) {
 		page_add_new_anon_rmap(page, vma, vmf->address);
+		// if (pg_from_reservation) {
+		// 	dec_node_page_state(page, NR_THP_RESERVED);
+		// 	khugepaged_mod_resv_unused(vma->vm_mm, vmf->address, -1);
+		// }
 	} else {
 		atomic_add(1, &page->_mapcount);
 		// pr_info("atomic_add(1, &page->_mapcount); page_to_pfn(page) = %lx page_count(page) = %d page_mapcount(page) = %d PageLRU(page) = %d PageCompound(page) = %d", page_to_pfn(page), page_count(page), page_mapcount(page), PageLRU(page), PageCompound(page));
 	}
 
-	if (!PageLRU(page))
+	if (!PageLRU(page)) {
 		lru_cache_add_inactive_or_unevictable(page, vma);
+	}
 	// else {
 	// 	pr_info("do_anonymous_page pg_from_reservation = %d page_to_pfn(page) = %lx page_count(page) = %d page_mapcount(page) = %d PageLRU(page) = %d PageCompound(page) = %d vmf->address = %lx", pg_from_reservation, page_to_pfn(page), page_count(page), page_mapcount(page), PageLRU(page), PageCompound(page), vmf->address);
 	// }
@@ -4315,6 +4323,12 @@ setpte:
 	update_mmu_cache(vma, vmf->address, vmf->pte);
 unlock:
 	pte_unmap_unlock(vmf->pte, vmf->ptl);
+
+	// if (pg_from_reservation && !PageCompound(page)) {
+	// 	dec_node_page_state(page, NR_THP_RESERVED);
+	// 	khugepaged_mod_resv_unused(vma->vm_mm, vmf->address, -1);
+	// }
+
 	return ret;
 release:
 	put_page(page);

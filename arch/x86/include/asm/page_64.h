@@ -46,6 +46,8 @@ extern unsigned long __phys_addr_symbol(unsigned long);
 void clear_page_orig(void *page);
 void clear_page_rep(void *page);
 void clear_page_erms(void *page);
+void clear_pages_erms(void *page, unsigned long npages);
+void clear_pages_movnt(void *page, unsigned long npages);
 void clear_pages_clzero(void *page, unsigned long npages);
 
 

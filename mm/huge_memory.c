@@ -1673,21 +1673,23 @@ int zap_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 	spinlock_t *ptl;
 	int i;
 
-	mutex_lock(&vma->vm_mm->thp_reservations->res_hash_lock);
-	struct thp_reservation *res = khugepaged_find_reservation(vma->vm_mm, addr);
-	if (!res || !PageCompound(res->page))
-		goto out;
-	
-	// pr_info("zap_huge_pmd page_to_pfn(page) = %lx page_count(page) = %d PageCompound(page) = %d PageLRU(page) = %d res->haddr = %lx vma->vm_flags = %lx", page_to_pfn(res->page), page_count(res->page), PageCompound(res->page), PageLRU(res->page), res->haddr, vma->vm_flags);
-	// for (i = 0; i < 512; i++)
-	// 	pr_info("zap_huge_pmd page_to_pfn(page) = %lx page_count(page) = %d PageCompound(page) = %d PageLRU(page) = %d res->haddr = %lx", page_to_pfn(res->page+i), page_count(res->page+i), PageCompound(res->page+i), PageLRU(res->page+i), res->haddr);
+	if (vma->vm_mm->thp_reservations) {
+		mutex_lock(&vma->vm_mm->thp_reservations->res_hash_lock);
+		struct thp_reservation *res = khugepaged_find_reservation(vma->vm_mm, addr);
+		if (!res || !PageCompound(res->page))
+			goto out;
+		
+		// pr_info("zap_huge_pmd page_to_pfn(page) = %lx page_count(page) = %d PageCompound(page) = %d PageLRU(page) = %d res->haddr = %lx vma->vm_flags = %lx", page_to_pfn(res->page), page_count(res->page), PageCompound(res->page), PageLRU(res->page), res->haddr, vma->vm_flags);
+		// for (i = 0; i < 512; i++)
+		// 	pr_info("zap_huge_pmd page_to_pfn(page) = %lx page_count(page) = %d PageCompound(page) = %d PageLRU(page) = %d res->haddr = %lx", page_to_pfn(res->page+i), page_count(res->page+i), PageCompound(res->page+i), PageLRU(res->page+i), res->haddr);
 
-	list_lru_del(&thp_reservations_lru, &res->lru);
-	hash_del(&res->node);
-	kfree(res);
+		list_lru_del(&thp_reservations_lru, &res->lru);
+		hash_del(&res->node);
+		kfree(res);
 
-out:
-	mutex_unlock(&vma->vm_mm->thp_reservations->res_hash_lock);
+	out:
+		mutex_unlock(&vma->vm_mm->thp_reservations->res_hash_lock);
+	}
 
 	tlb_change_page_size(tlb, HPAGE_PMD_SIZE);
 
@@ -2630,17 +2632,6 @@ static void __split_huge_page(struct page *page, struct list_head *list,
 	}
 
 	ClearPageCompound(head);
-	
-	// for (i = 0; i < 512; i++) {
-	// 	if (page_count(head+i) == 1) {
-	// 		lruvec_del_folio(lruvec, page_folio(head+i));
-	// 		__folio_clear_lru_flags(page_folio(head+i));
-	// 	}
-	// }
-
-	// for (i = 0; i < 512; i++)
-	// 	pr_info("__split_huge_page before page_to_pfn(head + i) = %lx page_count(head + %d) = %d page_mapcount(head) = %d PageCompound(head) = %d compound_mapcount_ptr(head) = %d PageLRU(head) = %d", page_to_pfn(head + i), i, page_count(head + i), page_mapcount(head + i), PageCompound(head + i), atomic_read(compound_mapcount_ptr(head + i)), PageLRU(head + i));
-	
 	unlock_page_lruvec(lruvec);
 	/* Caller disabled irqs, so they are still disabled here */
 
@@ -3016,7 +3007,7 @@ next:
 	 * Stop shrinker if we didn't split any page, but the queue is empty.
 	 * This can happen if pages were freed under us.
 	 */
-	//pr_info("split = %d", split);
+	//pr_info("deferred_split_scan split = %d", split);
 	if (!split && list_empty(&ds_queue->split_queue))
 		return SHRINK_STOP;
 	return split;
@@ -3033,7 +3024,7 @@ unsigned long deferred_split_scan_only_asap(struct shrinker *shrink,
 	struct page *page;
 	int split = 0;
 
-	// pr_info("deferred_split_scan_only_asap sc->nr_to_scan = %ld", sc->nr_to_scan);
+	pr_info("deferred_split_scan_only_asap sc->nr_to_scan = %ld", sc->nr_to_scan);
 
 #ifdef CONFIG_MEMCG
 	if (sc->memcg)

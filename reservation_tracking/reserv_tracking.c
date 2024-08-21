@@ -146,42 +146,51 @@ void osa_hpage_do_scan(void)
 	int list_size = 0;
 	int num_freed = 0;
 	int num_should_free = 0;
+	int num_should_split = 0;
+	int num_reserv = 0;
+	int num_reserv_freed = 0;
+	int num_hugepages = 0;
 	struct shrink_control sc;
 	unsigned int order = 9;
 	struct alloc_context *ac;
 	int split = 0;
+	bool check_spit = false;
 	int free_huge_pages;
 	sc.nr_to_scan = 999999999;
 	sc.nid = 0;
 	struct list_lru_one *l;
+	unsigned int t;
 
 	// === DEBUG ===
 	// memset(reservations, 0, 513*sizeof(unsigned int));
 	// =============
 
 	struct list_lru_node *nlru = &(&thp_reservations_lru)->node[0];
-// 	spin_lock(&nlru->lock);
-// restart:
-// 	l = &nlru->lru;
-// 	// pr_info("BEGIN list_for_each_safe");
-// 	list_for_each_safe(pos, aux, &l->list) {
-// 		list_size++;
-// 		struct thp_reservation *res = container_of(pos,
-// 						   struct thp_reservation,
-// 						   lru);
-// 		unsigned int t = jiffies_to_msecs(jiffies) - res->timestamp;
-// 		if (t > 5000)
-// 			num_should_free++;
-
-// 		if (thp_lru_free_reservation(pos, l, &nlru->lock, 5000) == LRU_REMOVED_RETRY) {
-// 			assert_spin_locked(&nlru->lock);
-// 			nlru->nr_items--;
-// 			num_freed++;
-// 			goto restart;
-// 		}
-// 	}
-// 	spin_unlock(&nlru->lock);
-// 	pr_info("list_size = %d num_freed = %d num_should_free = %d", list_size, num_freed, num_should_free);
+//  	spin_lock(&nlru->lock);
+//  restart_1:
+//  	l = &nlru->lru;
+//  	// pr_info("BEGIN list_for_each_safe");
+//  	list_for_each_safe(pos, aux, &l->list) {
+//  		list_size++;
+//  		struct thp_reservation *res = container_of(pos,
+//  						   struct thp_reservation,
+//  						   lru);
+//  		if (PageCompound(res->page))
+//  			num_hugepages++;
+//  		else {
+//  			num_reserv++;
+//  			/*if ((jiffies_to_msecs(jiffies) - res->timestamp) < 5000)
+//  				continue;
+//  			if (thp_lru_free_reservation(pos, l, &nlru->lock, NULL) == LRU_REMOVED_RETRY) {
+//  				assert_spin_locked(&nlru->lock);
+//  				nlru->nr_items--;
+//  				num_reserv_freed++;
+//  				goto restart_1;
+//  			}*/
+//  		}
+//  	}
+//  	spin_unlock(&nlru->lock);
+//  	pr_info("num_hugepages = %d num_reserv = %d num_reserv_freed = %d", num_hugepages, num_reserv, num_reserv_freed);
 
 	// === DEBUG ===
 	
@@ -193,10 +202,22 @@ restart:
 		struct thp_reservation *res = container_of(pos,
 						   struct thp_reservation,
 						   lru);
+		check_spit = false;
 		//reservations[bitmap_weight(res->mask, 512)]++;
 		// pr_info("bitmap_weight(res->mask, 512) = %d res->haddr = %lx", bitmap_weight(res->mask, 512), res->haddr);
-
+		
+		// if (!PageCompound(res->page)) {
+		// 	if ((jiffies_to_msecs(jiffies) - res->timestamp) < 5000)
+		// 		continue;
+		// 	if (thp_lru_free_reservation(pos, l, &nlru->lock, NULL) == LRU_REMOVED_RETRY) {
+		// 		assert_spin_locked(&nlru->lock);
+		// 		nlru->nr_items--;
+		// 		num_reserv_freed++;
+		// 		goto restart;
+		// 	}
+		// } else 
 		if (PageCompound(res->page) && bitmap_weight(res->mask, 512) < hugepage_promotion_threshold) {
+			num_should_split++;
 			if (!mutex_trylock(res->lock))
 				continue;
 			if (PageCompound(res->page) && bitmap_weight(res->mask, 512) < hugepage_promotion_threshold) {
@@ -222,13 +243,13 @@ restart:
 				if (!trylock_page(res->page))
 					goto next;
 				/* split_huge_page() removes page from list on success */
-				if (!split_huge_page(res->page))
+				if (!split_huge_page(res->page)) {
+					check_spit = true;
 					split++;
+				}
 				unlock_page(res->page);
 			next:
 				put_page(res->page);
-				// if (unused)
-				// 	mod_node_page_state(page_pgdat(page), NR_THP_RESERVED, -unused);
 	
 				spin_lock(&nlru->lock);
 				if (list_empty(pos)) {
@@ -239,6 +260,10 @@ restart:
 				}
 				mutex_unlock(res->lock);
 
+				// if (check_spit) {
+				// 	res->nr_unused = 512 - bitmap_weight(res->mask, 512);
+				// 	mod_node_page_state(page_pgdat(res->page), NR_THP_RESERVED, res->nr_unused);
+				// }
 				goto restart;
 			}
 		err_mmget:
@@ -272,8 +297,10 @@ restart:
 	// 	// pr_info("zone normal = %d", free_huge_pages);
 	
 	// split = deferred_split_scan_only_asap(NULL, &sc);
-	if (split)
-		pr_info("split = %d", split);
+	// long x = global_node_page_state(NR_THP_RESERVED);
+	// pr_info("NR_THP_RESERVED = %ld", x);
+	if (num_should_split || num_reserv_freed)
+	 	pr_info("split = %d num_should_split = %d num_reserv_freed = %d", split, num_should_split, num_reserv_freed);
 	
 	// 	compact_nodes();
 	// 	ds_queue = &pgdata->deferred_split_queue;

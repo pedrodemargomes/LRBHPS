@@ -418,6 +418,7 @@ void khugepaged_free_reservation(struct mm_struct *mm, struct thp_reservation *r
 	list_lru_del(&thp_reservations_lru, &res->lru);
 	hash_del(&res->node);
 	page = res->page;
+	// unused = res->nr_unused;
 
 	kfree(res);
 
@@ -449,21 +450,21 @@ void khugepaged_reserve(struct mm_struct *mm, struct vm_area_struct *vma, unsign
 		return;
 	if (!vma_is_anonymous(vma) || vma_is_temporary_stack(vma))
 		return;
-	// if (haddr < vma->vm_start || haddr + HPAGE_PMD_SIZE > vma->vm_end)
-	// 	return;
-	prev = next = NULL;
-	MA_STATE(mas, &mm->mm_mt, address, address);
-	prev = mas_prev(&mas, 0);
-	mas_set(&mas, address);
-	next = mas_next(&mas, ULONG_MAX);
-	if( (prev && prev->vm_end > haddr) || (next && next->vm_start < haddr + HPAGE_PMD_SIZE)) {
-		// pr_info("vma->vm_start = %lx vma->vm_end = %lx haddr = %lx", vma->vm_start, vma->vm_end, haddr);
-		// if (prev)
-		// 	pr_info("prev->vm_start = %lx prev->vm_end = %lx", prev->vm_start, prev->vm_end);
-		// if (next)
-		// 	pr_info("next->vm_start = %lx next->vm_end = %lx", next->vm_start, next->vm_end);
+	if (haddr < vma->vm_start || haddr + HPAGE_PMD_SIZE > vma->vm_end)
 		return;
-	}
+	// prev = next = NULL;
+	// MA_STATE(mas, &mm->mm_mt, address, address);
+	// prev = mas_prev(&mas, 0);
+	// mas_set(&mas, address);
+	// next = mas_next(&mas, ULONG_MAX);
+	// if( (prev && prev->vm_end > haddr) || (next && next->vm_start < haddr + HPAGE_PMD_SIZE)) {
+	// 	// pr_info("vma->vm_start = %lx vma->vm_end = %lx haddr = %lx", vma->vm_start, vma->vm_end, haddr);
+	// 	// if (prev)
+	// 	// 	pr_info("prev->vm_start = %lx prev->vm_end = %lx", prev->vm_start, prev->vm_end);
+	// 	// if (next)
+	// 	// 	pr_info("next->vm_start = %lx next->vm_end = %lx", next->vm_start, next->vm_end);
+	// 	return;
+	// }
 
 	mutex_lock(&mm->thp_reservations->res_hash_lock);
 
@@ -514,6 +515,7 @@ void khugepaged_reserve(struct mm_struct *mm, struct vm_area_struct *vma, unsign
 	// pr_info("add res to thp_reservations_lru haddr = %lx", haddr);
 	list_lru_add(&thp_reservations_lru, &res->lru);
 
+	// res->nr_unused = HPAGE_PMD_NR;
 	// mod_node_page_state(page_pgdat(page), NR_THP_RESERVED, HPAGE_PMD_NR);
 
 	mutex_unlock(&mm->thp_reservations->res_hash_lock);
@@ -521,13 +523,40 @@ void khugepaged_reserve(struct mm_struct *mm, struct vm_area_struct *vma, unsign
 	// khugepaged_enter_vma(vma, vma->vm_flags);
 }
 
+static int hugepage_vma_revalidate_old(struct mm_struct *mm, unsigned long address,
+		struct vm_area_struct **vmap)
+{
+	struct vm_area_struct *vma;
+	unsigned long hstart, hend;
+
+	*vmap = vma = find_vma(mm, address);
+	if (!vma)
+		return SCAN_VMA_NULL;
+
+	hstart = (vma->vm_start + ~HPAGE_PMD_MASK) & HPAGE_PMD_MASK;
+	hend = vma->vm_end & HPAGE_PMD_MASK;
+	if (address < hstart || address + HPAGE_PMD_SIZE > hend)
+		return SCAN_ADDRESS_RANGE;
+	if (!hugepage_vma_check(vma, vma->vm_flags, false, false, true))
+		return SCAN_VMA_CHECK;
+	/* Anon VMA expected */
+	if (!vma->anon_vma || vma->vm_ops)
+		return SCAN_VMA_CHECK;
+	return 0;
+}
+
+
 struct page *khugepaged_get_reserved_page(struct mm_struct *mm,
 					  struct vm_area_struct *vma,
 					  unsigned long address,
-					  bool *out)
+					  bool *out, bool *retry, unsigned int flags)
 {
 	struct thp_reservation *res;
 	struct page *page;
+	unsigned long haddr;
+	bool check_promote = false;
+	unsigned long offset;
+	*retry = false;
 
 	// if (!vma_is_anonymous(vma))
 	// 	return NULL;
@@ -539,25 +568,27 @@ struct page *khugepaged_get_reserved_page(struct mm_struct *mm,
 	page = NULL;
 	res = khugepaged_find_reservation(mm, address);
 	if (res) {
-		unsigned long offset = address & ~HPAGE_PMD_MASK;
-		
-
+		offset = address & ~HPAGE_PMD_MASK;
 		page = res->page + (offset >> PAGE_SHIFT);
 		// if (PageCompound(res->page)) {
-		// 	// pr_info("khugepaged_get_reserved_page PageCompound address = %lx page_to_pfn(page) = %lx page_count(page) = %d", address, page_to_pfn(page), page_count(page));
-		// 	mutex_unlock(&vma->thp_reservations->res_hash_lock);
+		// 	*out = true;
+		// 	pr_info("khugepaged_get_reserved_page PageCompound address = %lx page_to_pfn(page) = %lx page_count(page) = %d", address, page_to_pfn(page), page_count(page));
+		// 	mutex_unlock(&mm->thp_reservations->res_hash_lock);
+		// 	mmap_read_unlock(mm);
 		// 	return page;
 		// }
+		// if (page_count(page) == 0)
+		// 	pr_info("khugepaged_get_reserved_page page_count(page) == 0 PageCompound(page) = %d page_to_pfn(page) = %lx", PageCompound(page), page_to_pfn(page));
 
 		if (test_bit((offset >> PAGE_SHIFT), res->mask)) {
+			//if (page_count(page) != 2)
+			//	pr_info("khugepaged_get_reserved_page test_bit page_count(page) = %d PageCompound(page) = %d page_to_pfn(page) = %lx", page_count(page), PageCompound(page), page_to_pfn(page));
 			*out = true;
 			mutex_unlock(&mm->thp_reservations->res_hash_lock);
-			// pr_info("khugepaged_get_reserved_page out = true address = %lx page_to_pfn(res->page) = %lx page_to_pfn(page) = %lx page_count(page) = %d PageCompound(page) = %d", address, page_to_pfn(res->page), page_to_pfn(page), page_count(page), PageCompound(page));
+			mmap_read_unlock(mm);
+			// pr_info("khugepaged_get_reserved_page test_bit out = true address = %lx page_to_pfn(res->page) = %lx page_to_pfn(page) = %lx page_count(page) = %d PageCompound(page) = %d", address, page_to_pfn(res->page), page_to_pfn(page), page_count(page), PageCompound(page));
 			return NULL;
 		}
-
-		// if (page_count(page) == 0)
-		// 	pr_info("khugepaged_get_reserved_page page_count(page) == 0 page_to_pfn(page) = %d", page_to_pfn(page));
 
 		set_bit((offset >> PAGE_SHIFT), res->mask);
 		get_page(page);
@@ -566,21 +597,39 @@ struct page *khugepaged_get_reserved_page(struct mm_struct *mm,
 		res->timestamp = jiffies_to_msecs(jiffies);
 		list_lru_add(&thp_reservations_lru, &res->lru);
 
-		// dec_node_page_state(res->page, NR_THP_RESERVED);
+		haddr = address & HPAGE_PMD_MASK;
+		if (!(flags & FAULT_FLAG_TRIED) && !( haddr < vma->vm_start || haddr + HPAGE_PMD_SIZE > vma->vm_end)) {
+			if (res && !PageCompound(res->page) && bitmap_weight(res->mask, 512) > hugepage_promotion_threshold)
+				check_promote = true;
+		}
 	}
-
 	mutex_unlock(&mm->thp_reservations->res_hash_lock);
 
+	if (check_promote) {
+		mmap_read_unlock(mm);
+		mmap_write_lock(mm);
+		int ret_promo = promote_huge_page_address(mm, address & HPAGE_PMD_MASK);
+		if(ret_promo) {
+			count_vm_event(THP_RES_PROMOTION_FAIL);
+			*retry = true;
+			clear_bit((offset >> PAGE_SHIFT), res->mask);
+			// pr_info("khugepaged_get_reserved_page ret_promo != 0 address = %lx page_to_pfn(page) = %lx page_count(page) = %d PageCompound(page) = %d", address, page_to_pfn(page), page_count(page), PageCompound(page));
+		}
+		mmap_write_unlock(mm);
+		*out = true;
+		return NULL;
+	}
+	
 	return page;
 }
 
-void khugepaged_release_reservation(struct mm_struct *mm,
+struct thp_reservation *khugepaged_release_reservation(struct mm_struct *mm,
 				    unsigned long address)
 {
 	struct thp_reservation *res;
 
 	if (!mm->thp_reservations)
-		return;
+		return NULL;
 
 	mutex_lock(&mm->thp_reservations->res_hash_lock);
 
@@ -594,6 +643,7 @@ void khugepaged_release_reservation(struct mm_struct *mm,
 
 out:
 	mutex_unlock(&mm->thp_reservations->res_hash_lock);
+	return res;
 }
 
 /*
@@ -713,25 +763,25 @@ void thp_reservations_mremap(struct mm_struct *mm, struct vm_area_struct *vma,
 
 }
 
-// void khugepaged_mod_resv_unused(struct vm_area_struct *vma,
-// 				unsigned long address, int delta)
-// {
-// 	struct thp_reservation *res;
+void khugepaged_mod_resv_unused(struct mm_struct *mm,
+				unsigned long address, int delta)
+{
+	struct thp_reservation *res;
 
-// 	if (!vma->thp_reservations)
-// 		return;
+	if (!mm->thp_reservations)
+		return;
 
-// 	mutex_lock(&vma->thp_reservations->res_hash_lock);
+	mutex_lock(&mm->thp_reservations->res_hash_lock);
 
-// 	res = khugepaged_find_reservation(vma, address);
-// 	// if (res) {
-// 	// 	WARN_ON((res->nr_unused == 0) || (res->nr_unused + delta < 0));
-// 	// 	if (res->nr_unused + delta >= 0)
-// 	// 		res->nr_unused += delta;
-// 	// }
+	res = khugepaged_find_reservation(mm, address);
+	if (res) {
+		WARN_ON(res->nr_unused + delta < 0);
+		if (res->nr_unused + delta >= 0)
+			res->nr_unused += delta;
+	}
 
-// 	mutex_unlock(&vma->thp_reservations->res_hash_lock);
-// }
+	mutex_unlock(&mm->thp_reservations->res_hash_lock);
+}
 
 
 
@@ -823,6 +873,7 @@ enum lru_status thp_lru_free_reservation(struct list_head *item,
 	mmput(mm);
 
 	page = res->page;
+	// unused = res->nr_unused;
 	// struct list_lru_node *nlru = &(&thp_reservations_lru)->node[0];
 	// if (cb_arg == NULL)
 	// 	pr_info("thp_lru_free_reservation free cb_arg == NULL nlru->nr_items = %ld", nlru->nr_items);
@@ -1207,6 +1258,7 @@ static void __collapse_huge_page_convert(pte_t *pte, struct page *page,
 		// __page_cache_release( page_folio(page) );
 
 		if (pte_none(pteval) || is_zero_pfn(pte_pfn(pteval))) {
+			// cond_resched();
 			// clear_user_highpage(page, address);
 			add_mm_counter(vma->vm_mm, MM_ANONPAGES, 1);
 			if (is_zero_pfn(pte_pfn(pteval))) {
@@ -1380,7 +1432,7 @@ static int __collapse_huge_page_isolate(struct vm_area_struct *vma,
 		 */
 		if (page_count(page) != 1 + PageSwapCache(page) + 1) {
 			unlock_page(page);
-			// pr_info("__collapse_huge_page_isolate page_count(page) != 1 + PageSwapCache(page) + 1 page_to_pfn(head) = %lx PageCompound(head) = %d PageLRU(head) = %d page_count(page) = %d pte_none(pteval) = %d address = %lx vma->vm_start = %lx vma->vm_end = %lx", page_to_pfn(page), PageCompound(page), PageLRU(page), page_count(page), pte_none(pteval), address, vma->vm_start, vma->vm_end);
+			// pr_info("__collapse_huge_page_isolate page_count(page) != 1 + PageSwapCache(page) + 1 | page_to_pfn(head) = %lx PageCompound(head) = %d PageLRU(head) = %d page_count(page) = %d PageSwapCache(page) = %d pte_none(pteval) = %d address = %lx vma->vm_start = %lx vma->vm_end = %lx", page_to_pfn(page), PageCompound(page), PageLRU(page), page_count(page), PageSwapCache(page), pte_none(pteval), address, vma->vm_start, vma->vm_end);
 			goto out;
 		}
 		
@@ -1408,8 +1460,10 @@ static int __collapse_huge_page_isolate(struct vm_area_struct *vma,
 		if (pte_write(pteval))
 			writable = true;
 	}
-	if (unlikely(!writable || !referenced))
+	if (unlikely(!writable || !referenced)) {
+		pr_info("!writable || !referenced");
 		goto out;
+	}
 
 	return 1;
 
@@ -1560,27 +1614,6 @@ static bool hpage_collapse_alloc_page(struct page **hpage, gfp_t gfp, int node,
 	return true;
 }
 
-static int hugepage_vma_revalidate_old(struct mm_struct *mm, unsigned long address,
-		struct vm_area_struct **vmap)
-{
-	struct vm_area_struct *vma;
-	unsigned long hstart, hend;
-
-	*vmap = vma = find_vma(mm, address);
-	if (!vma)
-		return SCAN_VMA_NULL;
-
-	hstart = (vma->vm_start + ~HPAGE_PMD_MASK) & HPAGE_PMD_MASK;
-	hend = vma->vm_end & HPAGE_PMD_MASK;
-	if (address < hstart || address + HPAGE_PMD_SIZE > hend)
-		return SCAN_ADDRESS_RANGE;
-	if (!hugepage_vma_check(vma, vma->vm_flags, false, false, true))
-		return SCAN_VMA_CHECK;
-	/* Anon VMA expected */
-	if (!vma->anon_vma || vma->vm_ops)
-		return SCAN_VMA_CHECK;
-	return 0;
-}
 
 /*
  * If mmap_lock temporarily dropped, revalidate vma
@@ -2082,6 +2115,7 @@ int promote_huge_page_address(struct mm_struct *mm, unsigned long haddr)
 		pmd_populate(mm, pmd, pmd_pgtable(_pmd));
 		spin_unlock(pmd_ptl);
 		anon_vma_unlock_write(vma->anon_vma);
+		ret = -2;
 		goto out;
 	}
 
@@ -3631,6 +3665,7 @@ static int madvise_collapse_errno(enum scan_result r)
 int madvise_collapse(struct vm_area_struct *vma, struct vm_area_struct **prev,
 		     unsigned long start, unsigned long end)
 {
+	return 0;
 	struct collapse_control *cc;
 	struct mm_struct *mm = vma->vm_mm;
 	unsigned long hstart, hend, addr;
@@ -3687,7 +3722,7 @@ int madvise_collapse(struct vm_area_struct *vma, struct vm_area_struct **prev,
 		} else {
 			mmap_read_unlock(mm);
 			mmap_write_lock(mm);
-			result = promote_huge_page_address(mm, addr);
+			// result = promote_huge_page_address(mm, addr);
 			mmap_write_unlock(mm);
 			mmap_locked = false;
 		}

@@ -608,6 +608,7 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
 	mm->data_vm = oldmm->data_vm;
 	mm->exec_vm = oldmm->exec_vm;
 	mm->stack_vm = oldmm->stack_vm;
+	mm->thp_reservations = NULL;
 
 	retval = ksm_fork(mm, oldmm);
 	if (retval)

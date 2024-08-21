@@ -73,7 +73,7 @@ bool __list_del_entry_valid(struct list_head *entry)
 	
 		struct page *page = list_entry(entry, struct page, lru);
 		// pr_info("page_to_pfn(page) = %lx", page_to_pfn(page));
-		pr_info("page_to_pfn(page) = %lx page_count(page) = %d PageActive(page) = %d PageLRU(page) = %d page->lru = %lx PageTransCompound(page) = %d", page_to_pfn(page), page_count(page), PageActive(page), PageLRU(page), page->lru, test_bit(PG_head, &page->flags) || READ_ONCE(page->compound_head) & 1);
+		pr_err("page_to_pfn(page) = %lx page_count(page) = %d PageActive(page) = %d PageLRU(page) = %d page->lru = %lx PageTransCompound(page) = %d\n\n", page_to_pfn(page), page_count(page), PageActive(page), PageLRU(page), page->lru, test_bit(PG_head, &page->flags) || READ_ONCE(page->compound_head) & 1);
 		BUG();
 
 		return false;

@@ -1367,6 +1367,7 @@ const char * const vmstat_text[] = {
 	"thp_res_alloc",
 	"thp_res_alloc_failed",
 	"thp_res_promoted",
+	"thp_res_promotion_fail",
 #endif
 #ifdef CONFIG_MEMORY_BALLOON
 	"balloon_inflate",
